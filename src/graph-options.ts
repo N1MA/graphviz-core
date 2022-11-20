@@ -1,6 +1,6 @@
 export type GraphOptions = {
   path: string;
-  colors: string;
+  colors: string[];
   tileSize: number;
 
   baseZoomImgSize: number;

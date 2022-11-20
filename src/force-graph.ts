@@ -62,10 +62,10 @@ export class ForceGraph {
       console.log('Drawing svg');
 
       this.isSVGGenerated = false;
-      // const G = d3.map(this.nodes, (node) => node.group);
+      const G = d3.map(this.nodes, (node) => node.group);
 
-      // const nodeGroups = d3.sort(G);
-      // const color = d3.scaleOrdinal(nodeGroups, this.colors);
+      const nodeGroups = d3.sort(G);
+      const color = d3.scaleOrdinal(nodeGroups, this._options.colors);
 
       const forceNode = d3.forceManyBody();
       const forceLink = d3.forceLink(this.links).id(({ index: i }) => this.nodes[Number(i)].index);
@@ -131,13 +131,14 @@ export class ForceGraph {
         .selectAll('circle')
         .data(this.nodes)
         .join('circle')
-        .attr('r', this._options.nodeRadius);
-      // .attr('fill', (d: any) => color(d.group));
+        .attr('r', this._options.nodeRadius)
+        .attr('fill', (d: any) => color(d.group));
     });
   }
 
   private generateTilesForZoom(img: sharp.Sharp, w: number, h: number, z: number) {
-    for (let i = 0; i < w / this._options.tileSize; i++)
+    for
+      (let i = 0; i < w / this._options.tileSize; i++)
       for (let j = 0; j < h / this._options.tileSize; j++) this.generateTile(img, i, j, z);
   }
 
@@ -150,7 +151,6 @@ export class ForceGraph {
       height: this._options.tileSize,
     };
 
-    console.log(area);
     img
       .clone()
       .extract(area)
