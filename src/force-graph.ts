@@ -2,21 +2,26 @@ import * as d3 from 'd3';
 import { JSDOM } from 'jsdom';
 import sharp from 'sharp';
 
+import { EventEmitter } from 'events';
+
 import { GraphLink } from './graph-link';
 import { GraphNode } from './graph-node';
 
 import { GraphOptions } from './graph-options';
+import GraphEvent from './graph-event';
 
 export class ForceGraph {
   private svg: d3.Selection<any, any, any, any>;
   private _options: GraphOptions;
   private isSVGGenerated = false;
+  private eventEmitter: EventEmitter;
 
   constructor(
     public nodes: GraphNode[],
     public links: GraphLink[],
     options: Partial<GraphOptions> = {}
   ) {
+    this.eventEmitter = new EventEmitter();
     this._options = <GraphOptions>Object.assign(
       {
         path: 'generated_tiles',
@@ -49,30 +54,38 @@ export class ForceGraph {
     this.svg = container.append('svg');
   }
 
-  async generateTiles() {
-    if (!this.isSVGGenerated) await this.simulate();
-    for (let z = 0; z < this._options.zoomLevels; z++) {
-      const { img, w, h } = this.image(z + 1, true);
-      this.generateTilesForZoom(img, w, h, z);
-    }
+  public on(event: 'progress', listener: (event: GraphEvent) => void): void {
+    this.eventEmitter.on(event, listener);
+  }
+
+  private emit(event: GraphEvent) {
+    this.eventEmitter.emit('progress', event);
   }
 
   async simulate(): Promise<void> {
+    this.isSVGGenerated = false;
+
+    const simulationEvent = new GraphEvent('simulation', {
+      current: 0,
+      max: this._options.animationTicksMaxIters,
+    });
+    this.emit(simulationEvent);
+
+    const G = d3.map(this.nodes, (node) => node.group);
+
+    const nodeGroups = d3.sort(G);
+    const color = d3.scaleOrdinal(nodeGroups, this._options.colors);
+
+    const link = this.getLink();
+    const node = this.getNode(color);
+
+    const forceNode = d3.forceManyBody();
+    const forceLink = d3.forceLink(this.links).id(({ index: i }) => this.nodes[Number(i)].index);
+
+    let timer: NodeJS.Timeout;
+    let tickCounter = 0;
+
     return new Promise((resolve) => {
-      console.log('Drawing svg');
-
-      this.isSVGGenerated = false;
-      const G = d3.map(this.nodes, (node) => node.group);
-
-      const nodeGroups = d3.sort(G);
-      const color = d3.scaleOrdinal(nodeGroups, this._options.colors);
-
-      const forceNode = d3.forceManyBody();
-      const forceLink = d3.forceLink(this.links).id(({ index: i }) => this.nodes[Number(i)].index);
-
-      let timer: NodeJS.Timeout;
-      let tickCounter = 0;
-
       const onSimulationFinish = () => {
         clearTimeout(timer);
         simulation.stop();
@@ -89,7 +102,6 @@ export class ForceGraph {
 
       const ticked = () => {
         tickCounter++;
-        console.log(tickCounter + ' Animation tick ...');
         resetTimer();
 
         link
@@ -99,6 +111,9 @@ export class ForceGraph {
           .attr('y2', (d: any) => d.target.y);
 
         node.attr('cx', (d: any) => d.x).attr('cy', (d: any) => d.y);
+
+        simulationEvent.progress.current = tickCounter;
+        this.emit(simulationEvent);
 
         if (tickCounter === this._options.animationTicksMaxIters) {
           onSimulationFinish();
@@ -111,39 +126,61 @@ export class ForceGraph {
         .force('charge', forceNode)
         .force('center', d3.forceCenter())
         .on('tick', ticked);
-
-      const link = this.svg
-        .append('g')
-        .attr('stroke', this._options.linkStroke)
-        .attr('stroke-opacity', this._options.linkStrokeOpacity)
-        .attr('stroke-width', this._options.linkStrokeWidth)
-        .attr('stroke-linecap', this._options.linkStrokeLinecap)
-        .selectAll('line')
-        .data(this.links)
-        .join('line');
-
-      const node = this.svg
-        .append('g')
-        .attr('fill', this._options.nodeFill)
-        .attr('stroke', this._options.nodeStroke)
-        .attr('stroke-opacity', this._options.nodeStrokeOpacity)
-        .attr('stroke-width', this._options.nodeStrokeWidth)
-        .selectAll('circle')
-        .data(this.nodes)
-        .join('circle')
-        .attr('r', this._options.nodeRadius)
-        .attr('fill', (d: any) => color(d.group));
     });
   }
 
-  private generateTilesForZoom(img: sharp.Sharp, w: number, h: number, z: number) {
-    for
-      (let i = 0; i < w / this._options.tileSize; i++)
-      for (let j = 0; j < h / this._options.tileSize; j++) this.generateTile(img, i, j, z);
+  private getLink() {
+    return this.svg
+      .append('g')
+      .attr('stroke', this._options.linkStroke)
+      .attr('stroke-opacity', this._options.linkStrokeOpacity)
+      .attr('stroke-width', this._options.linkStrokeWidth)
+      .attr('stroke-linecap', this._options.linkStrokeLinecap)
+      .selectAll('line')
+      .data(this.links)
+      .join('line');
   }
 
-  private generateTile(img: sharp.Sharp, i: number, j: number, z: number) {
-    const fileName = `${this._options.path}/tiles/${z + 1}/${i}-${j}.png`;
+  private getNode(color: d3.ScaleOrdinal<number, string, never>) {
+    return this.svg
+      .append('g')
+      .attr('fill', this._options.nodeFill)
+      .attr('stroke', this._options.nodeStroke)
+      .attr('stroke-opacity', this._options.nodeStrokeOpacity)
+      .attr('stroke-width', this._options.nodeStrokeWidth)
+      .selectAll('circle')
+      .data(this.nodes)
+      .join('circle')
+      .attr('r', this._options.nodeRadius)
+      .attr('fill', (d: any) => color(d.group));
+  }
+
+  async generateTiles(generatePreview = false) {
+    if (!this.isSVGGenerated) await this.simulate();
+
+    for (let z = 1; z <= this._options.zoomLevels; z++) {
+      const { img, w, h } = this.image(z);
+      await this.generateTilesForZoom(img, w, h, z);
+    }
+  }
+
+  private async generateTilesForZoom(img: sharp.Sharp, w: number, h: number, z: number) {
+    const generationEvent = new GraphEvent('tiling', {
+      current: 0,
+      max: (w / this._options.tileSize) * (h / this._options.tileSize),
+      z,
+    });
+    for (let i = 0; i < w / this._options.tileSize; i++) {
+      for (let j = 0; j < h / this._options.tileSize; j++) {
+        await this.generateTile(img, i, j, z);
+        generationEvent.progress.current++;
+        this.emit(generationEvent);
+      }
+    }
+  }
+
+  private async generateTile(img: sharp.Sharp, i: number, j: number, z: number) {
+    const fileName = `${this._options.path}/tiles/${z}/${i}-${j}.png`;
     const area = {
       left: i * this._options.tileSize,
       top: j * this._options.tileSize,
@@ -151,17 +188,12 @@ export class ForceGraph {
       height: this._options.tileSize,
     };
 
-    img
-      .clone()
-      .extract(area)
-      .toFile(fileName)
-      .then(() => console.log(`\tGenerated ${fileName}`))
-      .catch((e: Error) => {
-        console.error('Error: ' + e);
-      });
+    await img.clone().extract(area).toFile(fileName);
   }
 
-  image(z: number = 0, generatePreview = false): { img: sharp.Sharp; w: number; h: number } {
+  image(z: number = 0): { img: sharp.Sharp; w: number; h: number } {
+    if (!this.isSVGGenerated) throw Error('Run simulation first');
+
     const w = z * this._options.baseZoomImgSize;
     const h = w;
     const t = d3.zoomIdentity.translate(w / 2, h / 2).scale(z * this._options.initialZoomScale);
@@ -176,15 +208,6 @@ export class ForceGraph {
     const buff = Buffer.from(svgTxt, 'utf-8');
     const img = sharp(buff).png();
 
-    if (generatePreview) {
-      const fileName = `${this._options.path}/preview-${z}.png`;
-      img
-        .toFile(fileName)
-        .then(() => console.log(`Generated ${fileName}`))
-        .catch((e) => {
-          console.error('Error: ' + e);
-        });
-    }
     return { img, w, h };
   }
 }
