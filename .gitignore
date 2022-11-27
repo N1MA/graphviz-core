@@ -1,5 +1,6 @@
 .vscode
 generated
+lib
 node_modules
 
 *.tgz
