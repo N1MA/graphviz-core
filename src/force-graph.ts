@@ -1,4 +1,5 @@
 import * as d3 from 'd3';
+import * as fs from 'fs';
 import { JSDOM } from 'jsdom';
 import sharp from 'sharp';
 
@@ -9,6 +10,7 @@ import { GraphNode } from './graph-node';
 
 import { GraphOptions } from './graph-options';
 import GraphEvent from './graph-event';
+
 
 export class ForceGraph {
   private svg: d3.Selection<any, any, any, any>;
@@ -24,7 +26,9 @@ export class ForceGraph {
     this.eventEmitter = new EventEmitter();
     this._options = <GraphOptions>Object.assign(
       {
-        path: 'generated_tiles',
+        storage: async (buffer: Buffer, slug: string) => {
+          fs.writeFileSync(__dirname + "/generated_tiles/" + slug, buffer);
+        },
         colors: d3.schemeTableau10,
         tileSize: 256,
 
@@ -180,7 +184,6 @@ export class ForceGraph {
   }
 
   private async generateTile(img: sharp.Sharp, i: number, j: number, z: number) {
-    const fileName = `${this._options.path}/tiles/${z}/${i}-${j}.png`;
     const area = {
       left: i * this._options.tileSize,
       top: j * this._options.tileSize,
@@ -188,7 +191,8 @@ export class ForceGraph {
       height: this._options.tileSize,
     };
 
-    await img.clone().extract(area).toFile(fileName);
+    const { data } = await img.clone().extract(area).toBuffer({ resolveWithObject: true });
+    this._options.store(data, `tiles/${z}/${i}-${j}.png`);
   }
 
   image(z: number = 0): { img: sharp.Sharp; w: number; h: number } {

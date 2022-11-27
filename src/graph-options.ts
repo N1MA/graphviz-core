@@ -1,5 +1,6 @@
 export type GraphOptions = {
-  path: string;
+  store: (buffer: Buffer, slug: string) => Promise<void>;
+
   colors: string[];
   tileSize: number;
 
